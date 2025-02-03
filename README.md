@@ -2,7 +2,7 @@
 
 This is a repository for data imputation in meta-analysis.
 
-Projects:
+Projects in which imputation was used:
 - Social Relationship Model (SRM) with Vasiliki Kentrou and Reinout de Vries
 
 ## Contact Details
