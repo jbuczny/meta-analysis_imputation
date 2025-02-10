@@ -1,0 +1,560 @@
+---
+title: "Imputation for Meta-Analysis"
+author: "Jacek Buczny"
+date: "Jan 29, 2025"
+output:
+  pdf_document: default
+  word_document: default
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loading packages, include = FALSE}
+
+library(readxl)
+library(metafor)
+library(mice)
+library(lattice)
+library(gridExtra)
+library(writexl)
+library(dplyr)
+library(knitr)
+```
+
+## Cleaning the environment to ensure a clean run
+
+```{r cleaning the enviroment}
+
+rm(list=ls())
+```
+
+## Preparing to load the data
+
+```{r listing files, include = FALSE}
+
+list.files()
+
+## Ensure that the correct file is in the folder
+## is on the list of file. If not go to Session > Set Working Directory
+## > To Source File Location
+## Reading the imported data set
+```
+
+```{r loading data}
+
+data_full <- readxl::read_xlsx("SE_SRM_missing.xlsx"
+                               , sheet = "full_data_set")
+
+data_missing <- readxl::read_xlsx("SE_SRM_missing.xlsx"
+                                  , sheet = "to_impute")
+```
+
+## Meta-analysis on full data
+
+```{r meta-analysis full}
+
+res1_target <- rma(yi = target_effect
+                   , sei = SE_target
+                   , data = data_full
+                   , slab = study
+                   , method = "REML")
+
+print(res1_target
+      , digits = 3)
+
+res1_perceiver <- rma(yi = perceiver_effect
+                      , sei = SE_perceiver
+                      , data = data_full
+                      , slab = study
+                      , method = "REML")
+
+print(res1_perceiver
+      , digits = 3)
+
+res1_relationship <- rma(yi = relationship_effect
+                         , sei = SE_relationship
+                         , data = data_full
+                         , slab = study
+                         , method = "REML")
+
+print(res1_relationship
+      , digits = 3)
+```
+
+## Meta-analysis with deletions
+
+```{r meta-analysis listwise deletion}
+
+res2_target <- rma(yi = target_effect
+                   , sei = SE_target
+                   , data = data_missing
+                   , slab = study
+                   , method = "REML")
+
+print(res2_target
+      , digits = 3)
+
+res2_perceiver <- rma(yi = perceiver_effect
+                      , sei = SE_perceiver
+                      , data = data_missing
+                      , slab = study
+                      , method = "REML")
+
+print(res2_perceiver
+      , digits = 3)
+
+res2_relationship <- rma(yi = relationship_effect
+                         , sei = SE_relationship
+                         , data = data_missing
+                         , slab = study
+                         , method = "REML")
+
+print(res2_relationship
+      , digits = 3)
+```
+
+## Presenting the missing data
+
+```{r missing table}
+
+## Obtaining general missing information
+data.frame(k.NA = colSums(is.na(data_missing)))
+```
+
+```{r}
+
+## Obtaining the number of missing values per study
+table(rowSums(is.na(data_missing)))
+```
+
+## Preparing for imputation
+
+```{r checking variable classes}
+
+## Ensure that all variables are numeric; use class()
+class(data_missing$target_effect)
+#perceiver_effect
+#relationship_effect
+#class(data_missing$total_N)
+#SE_target			
+#SE_perceiver		
+#SE_relationship
+```
+
+```{r creating prediction matrix}
+
+pred_matrix <- make.predictorMatrix(data_missing)
+
+pred_matrix
+
+```
+
+### Excluding irrelevant variables
+
+```{r prediction matrix}
+
+## Excluding variables as predictors
+pred_matrix[,"study"] <- 0
+pred_matrix[,"group_N"] <- 0
+
+## Excluding variables as predictors, BUT not preventing imputation
+#pred_matrix["target_effect",] <- 0
+#pred_matrix["perceiver_effect",] <- 0
+#pred_matrix["relationship_effect",] <- 0
+
+pred_matrix
+```
+
+### Selecting the imputation method
+
+```{r imputation method}
+
+imputation_method <- make.method(data_missing) ##PMM (ME) is the default
+
+## Variables NOT imputed
+#imputation_method["target_effect"] <- ""
+#imputation_method["perceiver_effect"] <- ""
+#imputation_method["relationship_effect"] <- ""
+
+imputation_method
+```
+
+### Generating data sets with imputed values
+
+```{r predictive mean matching}
+
+imputed_data <- mice(data_missing
+                     , print = FALSE
+                     , m = 20
+                     , predictorMatrix = pred_matrix
+                     , method = imputation_method
+                     , seed = 5678)
+```
+
+### Bayesian imputation
+
+Bayesian imputation has been tested, but does not provide matching data.
+
+```{r Bayesian, include = FALSE}
+
+# imputation_method <- make.method(data_missing)
+# 
+# imputation_method["target_effect"] <- "norm"
+# imputation_method["perceiver_effect"] <- "norm"
+# imputation_method["relationship_effect"] <- "norm"
+# 
+# imputation_method["SE_target"] <- "norm"
+# imputation_method["SE_perceiver"] <- "norm"
+# imputation_method["SE_relationship"] <- "norm"
+# 
+# imputation_method
+# 
+# imputed_data <- mice(data_missing
+#                      , print = FALSE, m = 20
+#                      , predictorMatrix = pred_matrix
+#                      , method = imputation_method
+#                      , seed = 5678)
+
+## This imputation produces negative values thus cannot be accepted.
+```
+
+```{r saving imputed data, include = FALSE}
+
+## Saving the imputed data sets
+
+## Looping through each imputation data set (m = 20)
+## Adjust if m is different than m = 20
+
+for (i in 1:20) {  
+
+## Extracting each imputed data set
+  imputed_dataset <- complete(imputed_data, action = i)
+  
+## Defining the file name
+  filename <- paste0("imputed_dataset_", i, ".csv")
+  
+## Saving each data set as a CSV file
+  write.csv(imputed_dataset, filename, row.names = FALSE)
+  
+## Printing message to confirm save
+  print(paste("Saved:", filename))
+}
+```
+
+## Validation of the selected imputation
+
+```{r imputation summary}
+
+## Getting basic information about imputed data
+summary(imputed_data)
+```
+
+```{r plotting density}
+
+## Extracting variables for plotting, setting labels
+p1 <- densityplot(imputed_data
+                  , ~ target_effect
+                  , main = "Target Effect"
+                  , xlab = "Effect Size")
+p2 <- densityplot(imputed_data
+                  , ~ perceiver_effect
+                  ,  main = "Perceiver Effect"
+                  , xlab = "Effect Size")
+p3 <- densityplot(imputed_data
+                  , ~ relationship_effect
+                  , main = "Relationship Effect"
+                  , xlab = "Effect Size")
+p4 <- densityplot(imputed_data
+                  , ~ SE_target
+                  , main = "Standard Error Target Effect"
+                  , xlab = "SE of the Effect Size")
+p5 <- densityplot(imputed_data
+                  , ~ SE_perceiver
+                  , main = "Standard Error Perceiver Effect"
+                  , xlab = "SE of the Effect Size")
+p6 <- densityplot(imputed_data
+                  , ~ SE_relationship
+                  , main = "Standard Error Perceiver Effect"
+                  , xlab = "SE of the Effect Size")
+
+p1
+p2
+p3
+p4
+p5
+p6
+
+## Saving density plots as a single .png file
+png("density_plots.png"
+    , width = 3000
+    , height = 3000
+    , res = 300)
+
+## Arranging the graphs
+grid.arrange(p1
+             , p2
+             , p3
+             , p4
+             , p5
+             , p6
+             , ncol = 2)
+
+dev.off()
+```
+
+```{r plotting interations}
+
+## Presenting the interation process
+plot(imputed_data)
+```
+
+### Obtaining aggregated means
+
+```{r, include = FALSE}
+
+## Extracting imputed data sets in long format
+completed_datasets <- complete(imputed_data, "long")
+
+## Copying source data set
+final_dataset <- data_missing
+
+## Looping through each variable with missing values
+for (var in colnames(data_missing)) {
+  if (any(is.na(data_missing[[var]]))) {  ## Checking if the variable has missing values
+    
+    ## Identifying the rows with missing values
+    missing_indices <- which(is.na(final_dataset[[var]]))
+    
+    ## Extracting imputed values for only missing rows
+    imputed_values <- completed_datasets[completed_datasets$.imp > 0, c(var, ".id")]
+    
+    ## Filtering only rows corresponding to missing values
+    imputed_values <- imputed_values[imputed_values$.id %in% missing_indices, ]
+    
+    ## Computing the mean imputation for each missing observation
+    mean_imputed_values <- aggregate(imputed_values[[var]], by = list(imputed_values$.id), FUN = mean)
+    
+    ## Ordering the mean imputed values by original row order
+    mean_imputed_values <- mean_imputed_values[order(mean_imputed_values$Group.1), ]
+
+    # Replacing only missing values in the original dataset
+    final_dataset[missing_indices, var] <- mean_imputed_values$x
+  }
+}
+```
+
+```{r}
+
+## Checking the final data set with mean-imputed values
+head(final_dataset)
+
+## Saving the final (aggregated) data set
+write_xlsx(final_dataset, "final_data_set.xlsx")
+```
+
+### Statistical tests of the distributions
+
+```{r, include = FALSE}
+
+##Extracting variables
+obs_target <- complete(imputed_data, action = "long")$target_effect
+imp_target <- final_dataset$target_effect
+
+obs_perceiver <- complete(imputed_data, action = "long")$perceiver_effect
+imp_perceiver <- final_dataset$perceiver_effect
+
+obs_relationship <- complete(imputed_data, action = "long")$relationship_effect
+imp_relationship <- final_dataset$relationship_effect
+
+obs_SE_target <- complete(imputed_data, action = "long")$SE_target
+imp_SE_target <- final_dataset$SE_target
+
+obs_SE_perceiver <- complete(imputed_data, action = "long")$SE_perceiver
+imp_SE_perceiver <- final_dataset$SE_perceiver
+
+obs_SE_relationship <- complete(imputed_data, action = "long")$SE_relationship
+imp_SE_relationship <- final_dataset$SE_relationship
+
+## Conduction t-tests
+t.test(obs_target, imp_target)
+t.test(obs_perceiver, imp_perceiver)
+t.test(obs_relationship, imp_relationship)
+
+t.test(obs_SE_target, imp_SE_target)
+t.test(obs_SE_perceiver, imp_SE_perceiver)
+t.test(obs_SE_relationship, imp_SE_relationship)
+
+## Conducting Kolmogorov-Smirnov test
+ks.test(obs_target, imp_target)
+ks.test(obs_perceiver, imp_perceiver)
+ks.test(obs_relationship, imp_relationship)
+
+ks.test(obs_SE_target, imp_SE_target)
+ks.test(obs_SE_perceiver, imp_SE_perceiver)
+ks.test(obs_SE_relationship, imp_SE_relationship)
+```
+
+```{r}
+
+## Defining a function to extract t-test results with three decimals
+get_ttest_results <- function(obs, imp) {
+  test <- t.test(obs, imp)
+  return(c(test$statistic, test$p.value))
+}
+
+## Defining a function to extract KS-test results
+get_ks_results <- function(obs, imp) {
+  test <- ks.test(obs, imp)
+  return(c(test$statistic, test$p.value))
+}
+
+## Performing t-tests and KS-tests for each variable
+results <- data.frame(
+  Variable = c("Target Effect"
+               , "Perceiver Effect"
+               , "Relationship Effect"
+               , "SE Target"
+               , "SE Perceiver"
+               , "SE Relationship")
+  ,
+  
+  T_Value = sprintf("%.3f", c(
+    get_ttest_results(obs_target, imp_target)[1],
+    get_ttest_results(obs_perceiver, imp_perceiver)[1],
+    get_ttest_results(obs_relationship, imp_relationship)[1],
+    get_ttest_results(obs_SE_target, imp_SE_target)[1],
+    get_ttest_results(obs_SE_perceiver, imp_SE_perceiver)[1],
+    get_ttest_results(obs_SE_relationship, imp_SE_relationship)[1]
+  )),
+  
+  T_P_Value = sprintf("%.3f", c(
+    get_ttest_results(obs_target, imp_target)[2],
+    get_ttest_results(obs_perceiver, imp_perceiver)[2],
+    get_ttest_results(obs_relationship, imp_relationship)[2],
+    get_ttest_results(obs_SE_target, imp_SE_target)[2],
+    get_ttest_results(obs_SE_perceiver, imp_SE_perceiver)[2],
+    get_ttest_results(obs_SE_relationship, imp_SE_relationship)[2]
+  )),
+  
+  KS_D_Statistic = sprintf("%.4f", c(
+    get_ks_results(obs_target, imp_target)[1],
+    get_ks_results(obs_perceiver, imp_perceiver)[1],
+    get_ks_results(obs_relationship, imp_relationship)[1],
+    get_ks_results(obs_SE_target, imp_SE_target)[1],
+    get_ks_results(obs_SE_perceiver, imp_SE_perceiver)[1],
+    get_ks_results(obs_SE_relationship, imp_SE_relationship)[1]
+  )),
+  
+  KS_P_Value = sprintf("%.4f", c(
+    get_ks_results(obs_target, imp_target)[2],
+    get_ks_results(obs_perceiver, imp_perceiver)[2],
+    get_ks_results(obs_relationship, imp_relationship)[2],
+    get_ks_results(obs_SE_target, imp_SE_target)[2],
+    get_ks_results(obs_SE_perceiver, imp_SE_perceiver)[2],
+    get_ks_results(obs_SE_relationship, imp_SE_relationship)[2]
+  ))
+)
+
+## Printing results as a properly formatted table
+kable(results, caption = "Results of T-tests and Kolmogorov-Smirnov Tests")
+```
+
+## Calculating meta-analysis with imputed data
+
+### Target effect
+
+```{r}
+
+res3_target <- with(imputed_data
+                    , rma(yi = target_effect
+                    , sei = SE_target))
+
+## Calculating averaged coefficients
+pool_target <- summary(pool(res3_target))
+pool_target[-1] <- round(pool_target[-1]
+                         , digits=4)
+
+pool_target
+```
+
+### Perceiver effect
+
+```{r}
+
+res3_perceiver <- with(imputed_data
+                       , rma(yi = perceiver_effect
+                       , sei = SE_perceiver))
+
+## Calculating averaged coefficients
+pool_perceiver <- summary(pool(res3_perceiver))
+pool_perceiver[-1] <- round(pool_perceiver[-1]
+                            , digits=4)
+
+pool_perceiver
+```
+
+### Relationship effect
+
+```{r}
+
+res3_relationship <- with(imputed_data
+                          , rma(yi = relationship_effect
+                          , sei = SE_relationship))
+
+## Calculating averaged coefficients
+pool_relationship <- summary(pool(res3_relationship))
+pool_relationship[-1] <- round(pool_relationship[-1]
+                               , digits=4)
+
+pool_relationship
+```
+
+The following piece of code uses aggregated imputed data sets. This
+indicates that the main meta-analysis can be prepared in a separate file
+basd on the file *final_data_set.xlsx*.
+
+Important: If we do not impute any of the effect sizes, studies not reporting them should be excluded. If necessary, we should write a formula for exclusion of imputed effect size and corresponding SEs.
+
+```{r meta-analysis imputed data}
+
+## Calculating the standard meta-analysis
+res3_target <- rma(yi = target_effect
+                   , sei = SE_target
+                   , data = final_dataset
+                   , slab = study
+                   , method = "REML")
+
+print(res3_target
+      , digits = 3)
+
+##Producing standard forest plot
+metafor::forest(res3_target
+                , addpred = TRUE
+                , xlab = "SRM Effect: Target"
+                , cex = .7
+                , at = c(-0.10, 0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80)
+                , xlim = c(-1.5, 1.5)
+                , digits = c(2, 1)
+                , header = "Study"
+                , order = "obs") ## Ordering by the effect size values
+```
+
+## Citation of the packages
+
+```{r citations}
+citation("readxl")
+citation("metafor")
+citation("mice")
+citation("lattice")
+citation("gridExtra")
+citation("writexl")
+citation("dplyr")
+citation("knitr")
+citation("utils")
+```
